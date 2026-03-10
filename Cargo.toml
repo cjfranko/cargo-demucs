@@ -1,0 +1,26 @@
+[package]
+name = "cargo-demucs"
+version = "0.1.0"
+edition = "2024"
+description = "A Rust wrapper for the Demucs music source separation tool"
+repository = "https://github.com/cjfranko/cargo-demucs"
+license = "MIT"
+keywords = ["audio", "music", "demucs", "source-separation", "stems"]
+categories = ["multimedia::audio", "command-line-utilities"]
+readme = "README.md"
+
+[[bin]]
+name = "cargo-demucs"
+path = "src/main.rs"
+
+[dependencies]
+thiserror = "2"
+# HTTP downloads (used to fetch python-build-standalone on first run)
+ureq = { version = "3", features = ["rustls"] }
+# Gzip decompression for the python-build-standalone tar.gz archive
+flate2 = "1"
+# Tar archive extraction for the python-build-standalone archive
+tar = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
