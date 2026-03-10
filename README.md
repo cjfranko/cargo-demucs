@@ -2,19 +2,80 @@
 
 A Rust library and CLI wrapper for the [Demucs](https://github.com/adefossez/demucs) music source separation tool.
 
-Demucs is a state-of-the-art deep-learning model that separates a mixed audio track into individual stems (vocals, drums, bass, and other instruments). This crate lets you invoke Demucs from Rust code or from the command line without writing Python or shell scripts.
+Demucs is a state-of-the-art deep-learning model that separates a mixed audio track into individual stems (vocals, drums, bass, and other instruments).
+
+**No Python installation is required.** On first run, `cargo-demucs` automatically downloads a self-contained Python interpreter ([python-build-standalone](https://github.com/indygreg/python-build-standalone)) and installs Demucs and all its dependencies into a private environment (`~/.cargo-demucs/`). Subsequent runs use the cached environment and start immediately.
 
 ---
 
-## Prerequisites
-
-Demucs itself is a Python package. Install it before using this crate:
+## Installation
 
 ```bash
-pip install demucs
+cargo install cargo-demucs
 ```
 
-> **Note:** A GPU (CUDA or Apple MPS) is recommended for fast processing, but the CPU backend works everywhere.
+That's it. Python, PyTorch, and Demucs are downloaded and managed automatically.
+
+> **Note:** The first run downloads several GB of dependencies (PyTorch is large). An internet connection is required on first use. A GPU (CUDA or Apple MPS) is recommended for fast processing, but the CPU backend works on every machine.
+
+---
+
+## CLI usage
+
+### First-time setup (optional – also triggered automatically)
+
+```bash
+cargo-demucs --setup
+```
+
+### Separate a track
+
+```bash
+# Separate a track using the default model (htdemucs):
+cargo-demucs song.mp3
+
+# Fine-tuned model, MP3 output, custom directory:
+cargo-demucs -n htdemucs_ft --mp3 -o /tmp/out song.flac
+
+# Extract vocals only:
+cargo-demucs --stem vocals song.wav
+
+# Check if the managed environment is ready:
+cargo-demucs --check
+```
+
+### All options
+
+```
+USAGE:
+    cargo-demucs [OPTIONS] <INPUT>...
+
+OPTIONS:
+    -n, --name <MODEL>         Model name (default: htdemucs)
+                               Examples: htdemucs, htdemucs_ft, mdx, mdx_extra
+    -d, --device <DEVICE>      Compute device: cpu, cuda, mps (default: cpu)
+    -o, --out <DIR>            Output directory (default: separated/)
+    -j, --jobs <N>             Number of parallel workers
+        --stem <STEM>          Extract a single stem: vocals, drums, bass, other
+        --two-stems <STEM>     Two-stems mode (stem + no_<stem>)
+        --mp3                  Save output as MP3
+        --flac                 Save output as FLAC
+        --mp3-bitrate <KBPS>   MP3 bitrate in kbps (default: 320)
+        --shifts <N>           Number of random shifts (equivariant stabilisation)
+        --overlap <FLOAT>      Overlap between windows, 0–1 (default: 0.25)
+        --no-split             Process the whole track as one segment
+        --segment <SECONDS>    Segment length in seconds
+        --clip-mode <MODE>     Clipping mode: rescale or clamp
+    -v, --verbose              Enable verbose output
+        --setup                Download and install the managed Python environment
+        --check                Check if the managed environment is ready and exit
+    -V, --version              Print Demucs version and exit
+    -h, --help                 Print this help message and exit
+
+ENVIRONMENT:
+    CARGO_DEMUCS_HOME   Override the managed environment directory
+                        (default: ~/.cargo-demucs/)
+```
 
 ---
 
@@ -32,6 +93,7 @@ cargo-demucs = "0.1"
 ```rust
 use cargo_demucs::Demucs;
 
+// The first call triggers automatic setup if needed.
 let output = Demucs::builder()
     .input("/path/to/song.mp3")
     .output_dir("/tmp/separated")
@@ -39,6 +101,21 @@ let output = Demucs::builder()
     .expect("Demucs failed");
 
 println!("{}", output.stderr); // Demucs progress is on stderr
+```
+
+### Pre-warm the environment before processing
+
+```rust
+use cargo_demucs::Demucs;
+
+// Show a "loading" screen while setup runs, then process.
+Demucs::setup().expect("setup failed");
+
+Demucs::builder()
+    .input("track.flac")
+    .output_dir("/tmp/out")
+    .run()
+    .unwrap();
 ```
 
 ### Extract only vocals as MP3
@@ -70,15 +147,16 @@ Demucs::builder()
     .unwrap();
 ```
 
-### Check availability and query version
+### Check whether the managed environment is ready
 
 ```rust
 use cargo_demucs::Demucs;
 
 if Demucs::is_available() {
-    println!("Demucs version: {}", Demucs::version().unwrap());
+    println!("Ready!");
 } else {
-    eprintln!("Demucs is not installed.");
+    // Trigger setup explicitly, or let builder.run() do it automatically.
+    Demucs::setup().unwrap();
 }
 ```
 
@@ -107,56 +185,26 @@ if Demucs::is_available() {
 
 ---
 
-## CLI usage
+## How the managed environment works
 
-After installing the crate you can call it directly:
+On first use, `cargo-demucs`:
 
-```bash
-cargo install cargo-demucs
-```
+1. Downloads the appropriate [python-build-standalone](https://github.com/indygreg/python-build-standalone) archive for the current OS and CPU architecture (~30 MB compressed).
+2. Extracts it to `~/.cargo-demucs/python/`.
+3. Runs `pip install demucs` inside that isolated environment (downloads PyTorch, torchaudio, etc. – several GB).
+4. On subsequent runs it detects the cached environment and starts immediately.
 
-```
-cargo-demucs – Rust wrapper for the Demucs music source separation tool
+The environment location can be overridden with the `CARGO_DEMUCS_HOME` environment variable.
 
-USAGE:
-    cargo-demucs [OPTIONS] <INPUT>...
+### Supported platforms
 
-OPTIONS:
-    -n, --name <MODEL>         Model name (default: htdemucs)
-    -d, --device <DEVICE>      Compute device: cpu, cuda, mps (default: cpu)
-    -o, --out <DIR>            Output directory (default: separated/)
-    -j, --jobs <N>             Number of parallel workers
-        --stem <STEM>          Extract a single stem: vocals, drums, bass, other
-        --two-stems <STEM>     Two-stems mode (stem + no_<stem>)
-        --mp3                  Save output as MP3
-        --flac                 Save output as FLAC
-        --mp3-bitrate <KBPS>   MP3 bitrate in kbps (default: 320)
-        --shifts <N>           Number of random shifts
-        --overlap <FLOAT>      Overlap between windows, 0–1
-        --no-split             Process the whole track as one segment
-        --segment <SECONDS>    Segment length in seconds
-        --clip-mode <MODE>     Clipping mode: rescale or clamp
-    -v, --verbose              Enable verbose output
-        --check                Check if Demucs is installed and exit
-    -V, --version              Print Demucs version and exit
-    -h, --help                 Print this help message and exit
-```
-
-### Examples
-
-```bash
-# Separate a track using the default model:
-cargo-demucs song.mp3
-
-# Fine-tuned model, MP3 output, custom directory:
-cargo-demucs -n htdemucs_ft --mp3 -o /tmp/out song.flac
-
-# Extract vocals only:
-cargo-demucs --stem vocals song.wav
-
-# Check if Demucs is installed:
-cargo-demucs --check
-```
+| OS | Architecture |
+|---|---|
+| Linux | x86_64 |
+| Linux | aarch64 (ARM64) |
+| macOS | x86_64 |
+| macOS | aarch64 (Apple Silicon) |
+| Windows | x86_64 |
 
 ---
 

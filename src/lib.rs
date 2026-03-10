@@ -5,9 +5,15 @@
 //!
 //! Demucs is a Python-based model that can split a mixed audio track into its
 //! individual stems (vocals, drums, bass, and other instruments). This crate
-//! provides an ergonomic Rust wrapper around the `demucs` command-line interface
-//! so that it can be embedded in larger Rust applications without the caller
-//! having to hand-craft shell commands.
+//! wraps the `demucs` command-line interface and **bundles its own Python
+//! environment** so that end users do not need Python installed on their
+//! machine.
+//!
+//! On the first run, `cargo-demucs` automatically downloads a
+//! [python-build-standalone](https://github.com/indygreg/python-build-standalone)
+//! distribution into `~/.cargo-demucs/` and installs Demucs (and its
+//! dependencies) via `pip`.  Subsequent runs use the cached environment and
+//! start immediately.
 //!
 //! ## Quick start
 //!
@@ -25,6 +31,7 @@
 //! ```
 
 pub mod error;
+pub mod python_env;
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -322,14 +329,46 @@ impl Demucs {
         DemucsBuilder::default()
     }
 
-    /// Check whether Demucs is available on the current system.
+    /// Pre-warm the managed Python environment.
     ///
-    /// This tries `demucs --help` first, then falls back to
-    /// `python -m demucs --help`.
+    /// On the first call this downloads python-build-standalone and runs
+    /// `pip install demucs`, which may take several minutes (PyTorch is
+    /// large).  On subsequent calls it returns immediately.
     ///
-    /// Returns `true` if Demucs is reachable, `false` otherwise.
+    /// Calling this method explicitly is optional – the builder's [`run`]
+    /// method will trigger setup automatically – but it allows applications
+    /// to show a loading screen or progress bar before starting a separation
+    /// job.
+    ///
+    /// [`run`]: DemucsBuilder::run
+    pub fn setup() -> Result<()> {
+        python_env::ensure_managed_python()?;
+        Ok(())
+    }
+
+    /// Check whether Demucs is available without triggering an automatic
+    /// download.
+    ///
+    /// Returns `true` when any of the following is true:
+    /// * The managed Python environment exists and has `demucs` installed.
+    /// * A standalone `demucs` binary is on `PATH`.
+    /// * A system Python interpreter with `demucs` is on `PATH`.
+    ///
+    /// This method **never** downloads anything; use [`setup`] or the
+    /// builder's [`run`] for that.
+    ///
+    /// [`setup`]: Demucs::setup
+    /// [`run`]: DemucsBuilder::run
     pub fn is_available() -> bool {
-        // Try the standalone `demucs` executable first.
+        // 1. Check the managed environment (fast – just tests file existence
+        //    and then `python -c "import demucs"`).
+        let env_dir = python_env::managed_env_dir();
+        let managed_python = python_env::managed_python_exe(&env_dir);
+        if managed_python.exists() && python_env::is_demucs_installed(&managed_python) {
+            return true;
+        }
+
+        // 2. Standalone `demucs` binary on PATH.
         if Command::new("demucs")
             .arg("--help")
             .output()
@@ -339,7 +378,7 @@ impl Demucs {
             return true;
         }
 
-        // Fall back to `python -m demucs`.
+        // 3. System Python with demucs installed.
         for python in &["python3", "python"] {
             if Command::new(python)
                 .args(["-m", "demucs", "--help"])
@@ -355,10 +394,19 @@ impl Demucs {
     }
 
     /// Return the version string reported by Demucs, or an error if it is not
-    /// installed.
+    /// available.
+    ///
+    /// This will trigger the managed environment setup if it has not been done
+    /// yet.
     pub fn version() -> Result<String> {
         let output = run_demucs_args(["--version"])?;
-        Ok(output.stdout.trim().to_owned())
+        // Demucs prints the version to stderr; check both.
+        let text = if output.stdout.trim().is_empty() {
+            output.stderr
+        } else {
+            output.stdout
+        };
+        Ok(text.trim().to_owned())
     }
 }
 
@@ -366,10 +414,33 @@ impl Demucs {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Try to find a working Demucs command, preferring the standalone binary and
-/// falling back to `python -m demucs` / `python3 -m demucs`.
+/// Try to find a working Demucs command.
+///
+/// Priority order:
+/// 1. **Managed Python environment** – always tried first. If the environment
+///    is not set up yet, `ensure_managed_python` will download it now.
+/// 2. Standalone `demucs` binary on `PATH` (system installation fallback).
+/// 3. System Python with `demucs` installed (system installation fallback).
+///
+/// If none of the above succeeds, [`DemucsError::NotInstalled`] is returned.
 fn demucs_command() -> Result<Command> {
-    // 1. Standalone `demucs` binary.
+    // 1. Try the managed environment.  This triggers setup on first run.
+    match python_env::ensure_managed_python() {
+        Ok(python) => {
+            let mut cmd = Command::new(python);
+            cmd.args(["-m", "demucs"]);
+            return Ok(cmd);
+        }
+        Err(e) => {
+            // Log the setup failure and fall back to system installations.
+            eprintln!(
+                "cargo-demucs: managed Python setup failed ({e}); \
+                 falling back to system installation..."
+            );
+        }
+    }
+
+    // 2. Standalone `demucs` binary.
     if Command::new("demucs")
         .arg("--help")
         .output()
@@ -379,7 +450,7 @@ fn demucs_command() -> Result<Command> {
         return Ok(Command::new("demucs"));
     }
 
-    // 2. Python module invocation.
+    // 3. System Python module.
     for python in &["python3", "python"] {
         let probed = Command::new(python)
             .args(["-m", "demucs", "--help"])

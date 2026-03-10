@@ -15,6 +15,12 @@ path = "src/main.rs"
 
 [dependencies]
 thiserror = "2"
+# HTTP downloads (used to fetch python-build-standalone on first run)
+ureq = { version = "3", features = ["rustls"] }
+# Gzip decompression for the python-build-standalone tar.gz archive
+flate2 = "1"
+# Tar archive extraction for the python-build-standalone archive
+tar = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

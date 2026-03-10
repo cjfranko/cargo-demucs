@@ -27,12 +27,26 @@ fn main() {
 
     if args.iter().any(|a| a == "--check") {
         if Demucs::is_available() {
-            println!("Demucs is available on this system.");
+            println!("Demucs is available (managed environment ready).");
         } else {
             eprintln!(
-                "Demucs is NOT available. Install it with: pip install demucs"
+                "Demucs is not yet set up. Run `cargo-demucs --setup` to \
+                 download and install the managed Python environment."
             );
             process::exit(1);
+        }
+        return;
+    }
+
+    if args.iter().any(|a| a == "--setup") {
+        match Demucs::setup() {
+            Ok(()) => {
+                println!("Managed Python environment is ready.");
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                process::exit(1);
+            }
         }
         return;
     }
@@ -201,8 +215,10 @@ fn main() {
         }
         Err(DemucsError::NotInstalled) => {
             eprintln!(
-                "error: Demucs is not installed.\n\
-                 Install it with: pip install demucs"
+                "error: Demucs could not be started.\n\
+                 Try running `cargo-demucs --setup` to set up the managed \
+                 Python environment, or ensure you have an internet connection \
+                 on first run."
             );
             process::exit(1);
         }
@@ -216,6 +232,9 @@ fn main() {
 fn print_help() {
     println!(
         "cargo-demucs – Rust wrapper for the Demucs music source separation tool
+
+cargo-demucs bundles its own Python environment. On the first run it
+automatically downloads Python and installs Demucs – no system Python required.
 
 USAGE:
     cargo-demucs [OPTIONS] <INPUT>...
@@ -240,11 +259,19 @@ OPTIONS:
         --segment <SECONDS>    Segment length in seconds
         --clip-mode <MODE>     Clipping mode: rescale or clamp
     -v, --verbose              Enable verbose output
-        --check                Check if Demucs is installed and exit
+        --setup                Download and install the managed Python environment
+        --check                Check if the managed environment is ready and exit
     -V, --version              Print Demucs version and exit
     -h, --help                 Print this help message and exit
 
+ENVIRONMENT:
+    CARGO_DEMUCS_HOME   Override the managed environment directory
+                        (default: ~/.cargo-demucs/)
+
 EXAMPLES:
+    # First-time setup (also happens automatically on first use):
+    cargo-demucs --setup
+
     # Separate a track using the default model (htdemucs):
     cargo-demucs song.mp3
 
@@ -254,11 +281,8 @@ EXAMPLES:
     # Extract only vocals:
     cargo-demucs --stem vocals song.wav
 
-    # Check if Demucs is installed:
+    # Check if the managed environment is ready:
     cargo-demucs --check
-
-Demucs must be installed separately:
-    pip install demucs
 "
     );
 }

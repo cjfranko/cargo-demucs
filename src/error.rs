@@ -26,4 +26,12 @@ pub enum DemucsError {
     /// An I/O error occurred while spawning or communicating with the process.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// The managed Python environment could not be set up.
+    ///
+    /// This can happen when the python-build-standalone archive cannot be
+    /// downloaded (e.g. no internet connection) or when `pip install demucs`
+    /// fails.
+    #[error("Python environment setup failed: {message}")]
+    PythonSetup { message: String },
 }
